@@ -1,0 +1,380 @@
+import React, { useState, useEffect } from 'react';
+import { AppState, Language, ContentNode } from '../types';
+
+interface AdminPanelProps {
+  state: AppState;
+}
+
+// Helper to flatten the tree for the sidebar list
+const flattenNodes = (nodes: ContentNode[], depth = 0): { node: ContentNode; depth: number }[] => {
+  return nodes.reduce((acc, curr) => {
+    acc.push({ node: curr, depth });
+    if (curr.children) {
+      acc.push(...flattenNodes(curr.children, depth + 1));
+    }
+    return acc;
+  }, [] as { node: ContentNode; depth: number }[]);
+};
+
+// Helper to update a specific node in the tree recursively
+const updateNodeInTree = (nodes: ContentNode[], updatedNode: ContentNode): ContentNode[] => {
+  return nodes.map(node => {
+    if (node.id === updatedNode.id) {
+      return updatedNode;
+    }
+    if (node.children) {
+      return { ...node, children: updateNodeInTree(node.children, updatedNode) };
+    }
+    return node;
+  });
+};
+
+export const AdminPanel: React.FC<AdminPanelProps> = ({ state }) => {
+  const [activeTab, setActiveTab] = useState<'general' | 'cms' | 'structure'>('cms');
+  
+  // CMS State
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<ContentNode | null>(null);
+  const [editingLang, setEditingLang] = useState<Language>(Language.ZH);
+
+  // Structure JSON State
+  const [structureJson, setStructureJson] = useState(JSON.stringify(state.structure, null, 2));
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  // Sync JSON when global state changes (e.g. after a CMS save)
+  useEffect(() => {
+    setStructureJson(JSON.stringify(state.structure, null, 2));
+  }, [state.structure]);
+
+  // Handle Node Selection in CMS
+  const handleNodeSelect = (node: ContentNode) => {
+    setSelectedNodeId(node.id);
+    // Deep copy to detach from state until saved
+    setEditForm(JSON.parse(JSON.stringify(node)));
+  };
+
+  // Handle CMS Form Changes
+  const handleContentChange = (field: 'title' | 'content', value: string) => {
+    if (!editForm) return;
+    setEditForm({
+      ...editForm,
+      [field]: {
+        ...editForm[field],
+        [editingLang]: value
+      }
+    });
+  };
+
+  // Save CMS Changes
+  const handleCMSSave = () => {
+    if (!editForm) return;
+    const newStructure = updateNodeInTree(state.structure, editForm);
+    state.updateStructure(newStructure);
+    // Also update the JSON view to match
+    setStructureJson(JSON.stringify(newStructure, null, 2));
+    alert(`Successfully updated "${editForm.title[editingLang]}"`);
+  };
+
+  // Handle Structure JSON Save
+  const handleStructureSave = () => {
+    try {
+      const parsed = JSON.parse(structureJson);
+      state.updateStructure(parsed);
+      setJsonError(null);
+      alert("Structure updated successfully!");
+    } catch (e) {
+      setJsonError((e as Error).message);
+    }
+  };
+
+  const flatNodes = flattenNodes(state.structure);
+
+  return (
+    <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden flex flex-col min-h-[800px]">
+      {/* Header */}
+      <div className="p-6 border-b border-gray-100 bg-slate-50 flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">網站管理後台</h2>
+          <p className="text-slate-500 text-sm">Web Administration Dashboard</p>
+        </div>
+        <div className="flex gap-2">
+           <span className="px-3 py-1 bg-brand-100 text-brand-700 rounded-full text-xs font-bold uppercase tracking-wider">
+             Admin Mode
+           </span>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200 bg-white sticky top-0 z-10">
+        <button 
+          className={`px-6 py-4 font-medium text-sm transition-all border-b-2 flex items-center gap-2 ${activeTab === 'cms' ? 'border-brand-600 text-brand-600 bg-brand-50/50' : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}
+          onClick={() => setActiveTab('cms')}
+        >
+          <span className="material-icons text-lg">edit_note</span>
+          內容編輯 (Content CMS)
+        </button>
+        <button 
+          className={`px-6 py-4 font-medium text-sm transition-all border-b-2 flex items-center gap-2 ${activeTab === 'general' ? 'border-brand-600 text-brand-600 bg-brand-50/50' : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}
+          onClick={() => setActiveTab('general')}
+        >
+          <span className="material-icons text-lg">settings</span>
+          一般設定 (Settings)
+        </button>
+        <button 
+          className={`px-6 py-4 font-medium text-sm transition-all border-b-2 flex items-center gap-2 ${activeTab === 'structure' ? 'border-brand-600 text-brand-600 bg-brand-50/50' : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}
+          onClick={() => setActiveTab('structure')}
+        >
+          <span className="material-icons text-lg">code</span>
+          進階結構 (Structure JSON)
+        </button>
+      </div>
+
+      <div className="flex-1 bg-slate-50 overflow-hidden flex">
+        
+        {/* === CMS TAB === */}
+        {activeTab === 'cms' && (
+          <div className="flex w-full h-full">
+            {/* Sidebar: Page Tree */}
+            <div className="w-1/3 border-r border-slate-200 bg-white overflow-y-auto">
+              <div className="p-4 border-b border-slate-100 bg-slate-50 sticky top-0 z-10">
+                <h3 className="font-bold text-slate-700">頁面列表 (Pages)</h3>
+                <p className="text-xs text-slate-500">Select a page to edit content</p>
+              </div>
+              <div className="p-2 space-y-1">
+                {flatNodes.map(({ node, depth }) => (
+                  <button
+                    key={node.id}
+                    onClick={() => handleNodeSelect(node)}
+                    className={`w-full text-left px-3 py-3 rounded-lg flex items-center transition-colors ${
+                      selectedNodeId === node.id 
+                        ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-200' 
+                        : 'hover:bg-slate-50 text-slate-700'
+                    }`}
+                    style={{ paddingLeft: `${depth * 1.5 + 1}rem` }}
+                  >
+                    <span className="material-icons text-sm mr-2 opacity-50">
+                      {node.type === 'category' ? 'folder' : 'description'}
+                    </span>
+                    <span className="truncate font-medium text-sm">{node.title[Language.ZH]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Main: Editor */}
+            <div className="w-2/3 overflow-y-auto bg-slate-50 p-8">
+              {editForm ? (
+                <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+                  
+                  {/* Editor Header */}
+                  <div className="flex items-center justify-between mb-6">
+                     <div>
+                       <h3 className="text-xl font-bold text-slate-800">{editForm.title[editingLang]}</h3>
+                       <div className="flex gap-2 text-xs text-slate-500 font-mono mt-1">
+                          <span className="bg-slate-200 px-2 py-0.5 rounded">ID: {editForm.id}</span>
+                          <span className="bg-slate-200 px-2 py-0.5 rounded">Type: {editForm.type}</span>
+                       </div>
+                     </div>
+                     <div className="flex bg-white rounded-lg p-1 border border-slate-200 shadow-sm">
+                        <button
+                          onClick={() => setEditingLang(Language.ZH)}
+                          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                            editingLang === Language.ZH ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          中文 (ZH)
+                        </button>
+                        <button
+                          onClick={() => setEditingLang(Language.EN)}
+                          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                            editingLang === Language.EN ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          English (EN)
+                        </button>
+                     </div>
+                  </div>
+
+                  {/* Fields */}
+                  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                         {editingLang === Language.ZH ? '單元標題' : 'Section Title'}
+                      </label>
+                      <input 
+                        type="text" 
+                        value={editForm.title[editingLang]}
+                        onChange={(e) => handleContentChange('title', e.target.value)}
+                        className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none font-medium"
+                      />
+                    </div>
+
+                    {editForm.type === 'page' && (
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex justify-between">
+                           <span>{editingLang === Language.ZH ? '頁面內容 (HTML 支援)' : 'Page Content (HTML Supported)'}</span>
+                           <span className="text-xs font-normal text-slate-400">Use &lt;h3&gt;, &lt;p&gt;, &lt;ul&gt; tags</span>
+                        </label>
+                        <textarea 
+                          value={editForm.content?.[editingLang] || ''}
+                          onChange={(e) => handleContentChange('content', e.target.value)}
+                          className="w-full p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none font-mono text-sm leading-relaxed h-[400px]"
+                        />
+                      </div>
+                    )}
+
+                    {editForm.type === 'category' && (
+                      <div className="bg-blue-50 text-blue-800 p-4 rounded-lg text-sm flex items-start gap-2">
+                        <span className="material-icons text-base mt-0.5">info</span>
+                        This is a category node. It acts as a container for sub-pages. You can edit its title, but it does not have body content.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-end pt-4">
+                    <button 
+                      onClick={handleCMSSave}
+                      className="flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white px-8 py-3 rounded-lg font-bold shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5"
+                    >
+                      <span className="material-icons">save</span>
+                      儲存變更 (Save Changes)
+                    </button>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                  <span className="material-icons text-6xl mb-4 text-slate-200">touch_app</span>
+                  <p className="text-lg font-medium">請從左側列表選擇一個頁面開始編輯</p>
+                  <p className="text-sm">Select a page from the sidebar to edit</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* === GENERAL SETTINGS TAB === */}
+        {activeTab === 'general' && (
+          <div className="w-full p-8 overflow-y-auto">
+            <div className="max-w-2xl mx-auto space-y-8 animate-fade-in">
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="font-bold text-lg text-slate-800 mb-6 pb-2 border-b border-slate-100">品牌識別 (Identity)</h3>
+                
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">主色調 (Brand Color)</label>
+                    <div className="flex items-center gap-4">
+                      <input 
+                        type="color" 
+                        value={state.config.brandColor} 
+                        onChange={(e) => state.updateConfig({ brandColor: e.target.value })}
+                        className="h-12 w-20 rounded cursor-pointer border-2 border-slate-200 p-1"
+                      />
+                      <div className="flex-1">
+                        <input 
+                          type="text" 
+                          value={state.config.brandColor}
+                          readOnly
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Logo URL</label>
+                    <div className="flex gap-4 items-start">
+                      <div className="flex-1">
+                        <input 
+                          type="text" 
+                          value={state.config.logoUrl}
+                          onChange={(e) => state.updateConfig({ logoUrl: e.target.value })}
+                          className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                        />
+                      </div>
+                      <div className="h-12 w-12 rounded-lg border border-slate-200 p-1 flex items-center justify-center bg-white shrink-0">
+                         <img src={state.config.logoUrl} alt="Preview" className="max-h-full max-w-full object-contain" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                 <h3 className="font-bold text-lg text-slate-800 mb-6 pb-2 border-b border-slate-100">網站名稱 (Site Title)</h3>
+                 <div className="grid grid-cols-1 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">中文名稱 (Chinese)</label>
+                    <input 
+                      type="text" 
+                      value={state.config.siteTitle[Language.ZH]}
+                      onChange={(e) => state.updateConfig({ siteTitle: { ...state.config.siteTitle, [Language.ZH]: e.target.value } })}
+                      className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                   <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">英文名稱 (English)</label>
+                    <input 
+                      type="text" 
+                      value={state.config.siteTitle[Language.EN]}
+                      onChange={(e) => state.updateConfig({ siteTitle: { ...state.config.siteTitle, [Language.EN]: e.target.value } })}
+                      className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* === STRUCTURE JSON TAB === */}
+        {activeTab === 'structure' && (
+          <div className="w-full p-8 flex flex-col h-full overflow-hidden">
+            <div className="mb-4 bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg shadow-sm">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <span className="material-icons text-amber-500">warning</span>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-amber-800 font-bold mb-1">進階模式 (Advanced Mode)</p>
+                  <p className="text-sm text-amber-700">
+                    此處允許您直接修改 JSON 結構以新增或刪除單元。請確保格式正確。
+                    <br/>
+                    Edit JSON to add/remove nodes or restructure the site tree. Ensure valid JSON format.
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 relative rounded-lg overflow-hidden border border-slate-700 shadow-inner">
+              <textarea
+                className="absolute inset-0 w-full h-full font-mono text-sm p-6 bg-slate-900 text-green-400 focus:outline-none resize-none"
+                value={structureJson}
+                onChange={(e) => setStructureJson(e.target.value)}
+                spellCheck={false}
+              />
+            </div>
+            
+            {jsonError && (
+              <div className="mt-4 text-red-600 text-sm bg-red-50 p-3 rounded border border-red-200 flex items-center gap-2 animate-bounce">
+                <span className="material-icons text-red-500">error</span>
+                JSON Error: {jsonError}
+              </div>
+            )}
+            
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={handleStructureSave}
+                className="px-8 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors shadow-md font-bold flex items-center gap-2"
+              >
+                <span className="material-icons text-sm">save_alt</span>
+                更新結構 (Update Structure)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
